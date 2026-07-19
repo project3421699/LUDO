@@ -1465,17 +1465,23 @@ class GameController {
             
             const piece = this.state.players[action.playerId].pieces[action.pieceId];
             const startStep = piece.step;
-            const targetStep = startStep + action.val;
             
-            for (let s = startStep + 1; s <= targetStep; s++) {
-              piece.step = s;
+            if (startStep === -1 && action.val === 6) {
+              piece.step = 0;
               Sound.playMove();
               this.renderer.renderPieces(this.state.players);
-              await sleep(150);
-            }
-            if (piece.step === 56) {
-              Sound.playHome();
-              this.writeLog(PLAYER_COLORS[action.playerId], `🎉 Piece reached home center for ${this.state.players[action.playerId].name}!`);
+            } else {
+              const targetStep = startStep + action.val;
+              for (let s = startStep + 1; s <= targetStep; s++) {
+                piece.step = s;
+                Sound.playMove();
+                this.renderer.renderPieces(this.state.players);
+                await sleep(150);
+              }
+              if (piece.step === 56) {
+                Sound.playHome();
+                this.writeLog(PLAYER_COLORS[action.playerId], `🎉 Piece reached home center for ${this.state.players[action.playerId].name}!`);
+              }
             }
 
             if (piece.step >= 0 && piece.step < 51) {
