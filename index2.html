@@ -120,12 +120,6 @@
     .cell.stretch-yellow { background-color: var(--yellow-light); border-color: var(--yellow-color); }
     .cell.stretch-blue { background-color: var(--blue-light); border-color: var(--blue-color); }
 
-    /* Fix the Triangle overlay alignment glitches */
-    .cell.arrow-red::after, .cell.arrow-green::after, .cell.arrow-yellow::after, .cell.arrow-blue::after {
-      position: absolute;
-      pointer-events: none;
-      z-index: 1;
-    }
     .cell.arrow-red::after { content: '▶'; font-size: calc(var(--cell-size) * 0.45); color: var(--red-dark); opacity: 0.7; }
     .cell.arrow-green::after { content: '▼'; font-size: calc(var(--cell-size) * 0.45); color: var(--green-dark); opacity: 0.7; }
     .cell.arrow-yellow::after { content: '◀'; font-size: calc(var(--cell-size) * 0.45); color: var(--yellow-dark); opacity: 0.7; }
@@ -712,15 +706,23 @@ class GameState {
   }
 
   switchTurn(rolledSix = false, capturedOpponent = false, reachedHome = false) {
-    // If they got another turn through six/capture/home and didn't exceed 3 consecutive sixes
-    const getsAnotherTurn = (rolledSix && this.rollAgainCount > 0) || capturedOpponent || reachedHome;
-    
-    if (getsAnotherTurn) {
+    if (rolledSix) {
+      this.rollAgainCount++;
+      if (this.rollAgainCount >= 3) {
+        this.rollAgainCount = 0;
+        this.logSystem(`${this.currentPlayer.name} rolled 3 sixes! Turn forfeited.`);
+      } else {
+        this.statePhase = 'rolling';
+        return;
+      }
+    } else if (capturedOpponent || reachedHome) {
+      this.rollAgainCount = 0;
       this.statePhase = 'rolling';
       return;
+    } else {
+      this.rollAgainCount = 0;
     }
 
-    this.rollAgainCount = 0;
     let iterations = 0;
     do {
       this.currentPlayerIdx = (this.currentPlayerIdx + 1) % this.activePlayers.length;
@@ -1536,26 +1538,14 @@ class GameController {
       }
     }
 
-    // Overwrite the type configuration
     for (let pIdx = 0; pIdx < 4; pIdx++) {
       const p = this.state.players[pIdx];
       if (room.players[pIdx]) {
         p.type = room.players[pIdx].type;
         p.name = room.players[pIdx].name || p.name;
       }
-    }
-
-    // Resolve Stale Overwrites: Halt coordinate synchronization while we are actively playing out local transitions
-    if (this.state.statePhase !== 'bot-thinking') {
-      for (let pIdx = 0; pIdx < 4; pIdx++) {
-        const p = this.state.players[pIdx];
-        const steps = game.pieces[pIdx];
-        if (steps) {
-          p.pieces.forEach((piece, i) => {
-            piece.step = steps[i];
-          });
-        }
-      }
+      const steps = game.pieces[pIdx];
+      if (steps) p.pieces.forEach((piece, i) => { piece.step = steps[i]; });
     }
 
     this.state.currentPlayerIdx = game.currentPlayerIdx;
@@ -1698,7 +1688,6 @@ class GameController {
         nextRollAgainCount = 0;
       }
 
-      // Check immediate 3-sixes turn forfeit
       if (nextRollAgainCount >= 3) {
         this.state.rollAgainCount = 0;
         this.state.switchTurn(false, false, false);
@@ -1711,8 +1700,6 @@ class GameController {
         });
         return;
       }
-
-      this.state.rollAgainCount = nextRollAgainCount;
 
       await currentRoomRef.update({
         "gameState/diceValue": roll,
@@ -1743,7 +1730,6 @@ class GameController {
       nextRollAgainCount = 0;
     }
 
-    // Check immediate 3-sixes turn forfeit
     if (nextRollAgainCount >= 3) {
       this.state.rollAgainCount = 0;
       this.state.switchTurn(false, false, false);
@@ -1911,11 +1897,9 @@ class GameController {
           nextRollAgainCount = 0;
         }
 
-        // Check immediate 3-sixes turn forfeit
         if (nextRollAgainCount >= 3) {
           this.state.rollAgainCount = 0;
           this.state.switchTurn(false, false, false);
-          this.writeLog('system', `🚫 ${current.name} rolled three 6s! Turn forfeited.`);
           
           if (this.isMultiplayer) {
             await currentRoomRef.update({
