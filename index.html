@@ -78,6 +78,7 @@
     }
 
     @keyframes chip-glow { from { box-shadow: 0 0 4px var(--gold); } to { box-shadow: 0 0 12px var(--gold); } }
+    @keyframes pulse { from { transform: scale(1); } to { transform: scale(1.05); } }
 
     /* =====================================================================
        LUDO BOARD (CSS Grid 15x15)
@@ -89,7 +90,11 @@
       border-radius: 16px; overflow: hidden; background: var(--bg-dark);
       box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6); position: relative;
     }
-    .cell { position: relative; display: flex; align-items: center; justify-content: center; background-color: #f8fafc; border: 1px solid #cbd5e1; box-sizing: border-box; }
+    .cell { 
+      position: relative; display: flex; align-items: center; justify-content: center; 
+      background-color: #f8fafc; border: 1px solid #cbd5e1; box-sizing: border-box; 
+      flex-wrap: wrap; gap: 1px; align-content: center;
+    }
     .yard { grid-row-end: span 6; grid-column-end: span 6; display: flex; align-items: center; justify-content: center; padding: 6%; box-sizing: border-box; border: 2px solid var(--panel-border); }
     .yard.red { background-color: var(--red-bg); }
     .yard.green { background-color: var(--green-bg); }
@@ -146,9 +151,9 @@
     .piece[data-color="yellow"] { background: radial-gradient(circle at 35% 35%, var(--yellow-light), var(--yellow-color) 70%, var(--yellow-dark)); }
     .piece[data-color="blue"] { background: radial-gradient(circle at 35% 35%, var(--blue-light), var(--blue-color) 70%, var(--blue-dark)); }
 
-    .cell[data-count="2"] .piece { width: 45%; height: 45%; }
-    .cell[data-count="3"] .piece, .cell[data-count="4"] .piece { width: 40%; height: 40%; }
-    .cell[data-count="5"] .piece, .cell[data-count="6"] .piece { width: 32%; height: 32%; }
+    .cell[data-count="2"] .piece { width: 42%; height: 42%; }
+    .cell[data-count="3"] .piece, .cell[data-count="4"] .piece { width: 38%; height: 38%; }
+    .cell[data-count="5"] .piece, .cell[data-count="6"] .piece { width: 30%; height: 30%; }
     .center-home-area .piece { width: clamp(14px, 4vw, 22px); height: clamp(14px, 4vw, 22px); font-size: 0px; }
 
     .piece.movable { animation: piece-pulse 0.8s infinite alternate ease-in-out; z-index: 15; }
@@ -238,7 +243,7 @@
       background: var(--panel-bg); border: 1px solid var(--panel-border);
       border-radius: 12px; padding: 10px 14px; height: 80px; overflow-y: auto;
       font-size: clamp(0.72rem, 3vw, 0.8rem); color: var(--text-dim);
-      display: flex; flex-direction: column-reverse; gap: 3px;
+      display: flex; flex-direction: column; gap: 3px;
       box-shadow: inset 0 2px 6px rgba(0,0,0,0.2);
     }
     .log-entry { padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,0.03); }
@@ -487,7 +492,16 @@
    ===================================================================== */
 const Sound = {
   ctx: null,
-  init() { this.ctx = this.ctx || new (window.AudioContext || window.webkitAudioContext)(); },
+  init() { 
+    try {
+      this.ctx = this.ctx || new (window.AudioContext || window.webkitAudioContext)(); 
+      if (this.ctx && this.ctx.state === 'suspended') {
+        this.ctx.resume();
+      }
+    } catch (e) {
+      console.warn("Audio Context init blocked or failed: ", e);
+    }
+  },
   synth(type, fStart, fEnd, dur, vol) {
     this.init(); if (!this.ctx) return;
     const now = this.ctx.currentTime, osc = this.ctx.createOscillator(), g = this.ctx.createGain();
@@ -651,17 +665,18 @@ class GameState {
   }
 
   isCoordinateSafe(coord) {
+    if (!coord) return false;
     return SAFE_COORDS.some(s => s.r === coord.r && s.c === coord.c);
   }
 
   checkCaptureImminent(playerId, targetCoord) {
-    if (this.isCoordinateSafe(targetCoord)) return false;
+    if (!targetCoord || this.isCoordinateSafe(targetCoord)) return false;
     return this.activePlayers.some(p => {
       if (p.id === playerId) return false;
       return p.pieces.some(piece => {
         if (piece.step >= 0 && piece.step < 51) {
           const coord = PLAYER_PATHS[p.id][piece.step];
-          return coord.r === targetCoord.r && coord.c === targetCoord.c;
+          return coord && coord.r === targetCoord.r && coord.c === targetCoord.c;
         }
         return false;
       });
@@ -669,13 +684,16 @@ class GameState {
   }
 
   isPieceVulnerable(playerId, coord) {
+    if (!coord) return false;
     const trackIdx = TRACK_COORDS.findIndex(t => t.r === coord.r && t.c === coord.c);
     if (trackIdx === -1) return false;
     return this.activePlayers.some(p => {
       if (p.id === playerId) return false;
       return p.pieces.some(piece => {
         if (piece.step >= 0 && piece.step < 51) {
-          const oppIdx = TRACK_COORDS.findIndex(t => t.r === PLAYER_PATHS[p.id][piece.step].r && t.c === PLAYER_PATHS[p.id][piece.step].c);
+          const pCoord = PLAYER_PATHS[p.id][piece.step];
+          if (!pCoord) return false;
+          const oppIdx = TRACK_COORDS.findIndex(t => t.r === pCoord.r && t.c === pCoord.c);
           if (oppIdx !== -1) {
             let dist = trackIdx - oppIdx;
             if (dist < 0) dist += 52;
@@ -705,9 +723,11 @@ class GameState {
       this.rollAgainCount = 0;
     }
 
+    let iterations = 0;
     do {
       this.currentPlayerIdx = (this.currentPlayerIdx + 1) % this.activePlayers.length;
-    } while (this.currentPlayer.isWinner);
+      iterations++;
+    } while (this.currentPlayer.isWinner && iterations < this.activePlayers.length);
 
     this.statePhase = 'rolling';
   }
@@ -824,6 +844,8 @@ class BoardRenderer {
 
   renderPieces(players) {
     document.querySelectorAll('.piece').forEach(el => el.remove());
+    document.querySelectorAll('.cell[data-count]').forEach(el => el.removeAttribute('data-count'));
+    
     const cellGroups = {};
     players.forEach(player => {
       if (!player.isActive) return;
@@ -836,9 +858,11 @@ class BoardRenderer {
           if (area) area.appendChild(this.createPieceElement(piece));
         } else {
           const coord = PLAYER_PATHS[player.id][piece.step];
-          const key = `cell-${coord.r}-${coord.c}`;
-          cellGroups[key] = cellGroups[key] || [];
-          cellGroups[key].push(piece);
+          if (coord) {
+            const key = `cell-${coord.r}-${coord.c}`;
+            cellGroups[key] = cellGroups[key] || [];
+            cellGroups[key].push(piece);
+          }
         }
       });
     });
@@ -927,7 +951,7 @@ class GameController {
   }
 
   setupUIBindings() {
-    document.getElementById('btn-start-game').addEventListener('click', () => this.startGameSetup());
+    document.getElementById('btn-start-game').addEventListener('click', () => { Sound.init(); this.startGameSetup(); });
 
     document.addEventListener('click', (e) => {
       if (e.target.tagName === 'BUTTON' && e.target.parentElement.classList.contains('btn-group')) {
@@ -936,19 +960,19 @@ class GameController {
       }
     });
 
-    document.getElementById('tab-btn-local').addEventListener('click', () => this.switchSetupTab('local'));
-    document.getElementById('tab-btn-online').addEventListener('click', () => this.switchSetupTab('online'));
+    document.getElementById('tab-btn-local').addEventListener('click', () => { Sound.init(); this.switchSetupTab('local'); });
+    document.getElementById('tab-btn-online').addEventListener('click', () => { Sound.init(); this.switchSetupTab('online'); });
     
-    document.getElementById('dice-scene').addEventListener('click', () => this.handleDiceRollAction());
+    document.getElementById('dice-scene').addEventListener('click', () => { Sound.init(); this.handleDiceRollAction(); });
 
     document.getElementById('btn-restart').addEventListener('click', () => this.handleQuitOrRestart());
     document.getElementById('btn-play-again').addEventListener('click', () => this.handleQuitOrRestart());
 
-    document.getElementById('btn-create-room').addEventListener('click', () => this.createRoom());
+    document.getElementById('btn-create-room').addEventListener('click', () => { Sound.init(); this.createRoom(); });
     document.getElementById('btn-join-room-trigger').addEventListener('click', () => {
       document.getElementById('join-room-form').style.display = 'block';
     });
-    document.getElementById('btn-submit-join').addEventListener('click', () => this.joinRoom());
+    document.getElementById('btn-submit-join').addEventListener('click', () => { Sound.init(); this.joinRoom(); });
     document.getElementById('btn-leave-room').addEventListener('click', () => this.leaveRoom());
     document.getElementById('btn-ready-multiplayer').addEventListener('click', () => this.toggleReady());
     document.getElementById('btn-start-multiplayer').addEventListener('click', () => this.startMultiplayerMatch());
@@ -960,12 +984,11 @@ class GameController {
   }
 
   /* =====================================================================
-     FIREBASE INITIALIZATION (EXCLUSIVELY LOADED FROM VERCEL ENV VARIABLES)
+     FIREBASE INITIALIZATION
      ===================================================================== */
   async initFirebaseApp() {
     let config = null;
 
-    // 1. Try to fetch dynamic config from Vercel Serverless Function route
     try {
       const res = await fetch('/api/config');
       if (res.ok) {
@@ -975,10 +998,9 @@ class GameController {
         }
       }
     } catch (e) {
-      console.log("Could not fetch serverless Vercel env, checking build-time placeholders...", e);
+      console.log("Using build-time placeholders or sandbox config.", e);
     }
 
-    // 2. Fallback to build-time placeholder replacement (for CI/CD pipelines)
     if (!config) {
       const placeholder = {
         databaseURL: "__FIREBASE_DATABASE_URL__",
@@ -991,7 +1013,6 @@ class GameController {
       }
     }
 
-    // 3. Fallback default sandbox database if no environment is defined yet
     if (!config) {
       config = {
         apiKey: "AIzaSyAs-LudoMasterSandboxKey-9912",
@@ -1008,7 +1029,7 @@ class GameController {
       if (firebase.apps.length === 0) firebase.initializeApp(config);
       firebaseDB = firebase.database();
     } catch (e) {
-      console.error("Firebase initialization failed completely:", e);
+      console.error("Firebase initialization skipped: running on local config fallback.", e);
     }
   }
 
@@ -1055,7 +1076,7 @@ class GameController {
     this.renderer.renderPieces(this.state.players);
 
     document.getElementById('setup-overlay').classList.remove('show');
-    this.writeLog('system', '🎮 Local Match started! Best of luck.');
+    this.writeLog('system', '🎮 Local Match started!');
     this.updateUI();
     this.checkTurnState();
   }
@@ -1065,7 +1086,7 @@ class GameController {
      ===================================================================== */
   async createRoom() {
     if (!firebaseDB) {
-      alert("Firebase is not initialized yet. Check your environment settings.");
+      alert("Firebase integration offline. Please proceed on Offline Local mode.");
       return;
     }
     const name = document.getElementById('online-player-name').value.trim();
@@ -1098,7 +1119,7 @@ class GameController {
       this.connectToRoom(roomId);
     } catch (e) {
       console.error(e);
-      document.getElementById('online-setup-error').textContent = 'Could not write to Database.';
+      document.getElementById('online-setup-error').textContent = 'Database error creating room.';
     }
   }
 
@@ -1117,7 +1138,7 @@ class GameController {
     try {
       const snap = await firebaseDB.ref(`rooms/${roomId}`).once('value');
       if (!snap.exists()) {
-        document.getElementById('online-setup-error').textContent = 'Room does not exist.';
+        document.getElementById('online-setup-error').textContent = 'Room not found.';
         return;
       }
       const room = snap.val();
@@ -1127,7 +1148,7 @@ class GameController {
           if (room.players[i] && room.players[i].userId === myUserId) inRoom = true;
         }
         if (!inRoom) {
-          document.getElementById('online-setup-error').textContent = 'Game already in progress.';
+          document.getElementById('online-setup-error').textContent = 'Game is already in progress.';
           return;
         }
       }
@@ -1154,7 +1175,7 @@ class GameController {
     currentRoomRef.on('value', (snap) => {
       const room = snap.val();
       if (!room) {
-        this.writeLog('system', 'Room was deleted or closed.');
+        this.writeLog('system', 'Room was closed.');
         this.leaveRoom();
         return;
       }
@@ -1197,7 +1218,7 @@ class GameController {
       const nextHost = activeHumans[0];
       if (nextHost === myUserId) {
         currentRoomRef.update({ hostId: myUserId });
-        this.writeLog('system', '👑 Host disconnected. You are now the host!');
+        this.writeLog('system', '👑 Host changed. You are host!');
       }
     }
 
@@ -1252,7 +1273,7 @@ class GameController {
         try {
           await this.syncOnlineGameState(room);
         } catch (e) {
-          console.error("Error in syncOnlineGameState:", e);
+          console.error("Error syncing online state: ", e);
         }
       });
     }
@@ -1359,9 +1380,9 @@ class GameController {
       });
 
       if (this.myColorIdx !== -1) {
-        currentRoomRef.child(`players/${this.myColorIdx}`).onDisconnect().cancel();
+        currentRoomRef.child(`players/${this.myColorIdx}/lastActive`).onDisconnect().cancel();
       }
-      currentRoomRef.child(`players/${idx}`).onDisconnect().set({ type: 'empty', name: '', userId: '', isReady: false });
+      currentRoomRef.child(`players/${idx}/lastActive`).onDisconnect().set(0);
 
     } catch (e) {
       console.error(e);
@@ -1487,19 +1508,19 @@ class GameController {
               }
               if (piece.step === 56) {
                 Sound.playHome();
-                this.writeLog(PLAYER_COLORS[action.playerId], `🎉 Piece reached home center for ${this.state.players[action.playerId].name}!`);
+                this.writeLog(PLAYER_COLORS[action.playerId], `🎉 Token arrived home for ${this.state.players[action.playerId].name}!`);
               }
             }
 
             if (piece.step >= 0 && piece.step < 51) {
               const coord = PLAYER_PATHS[action.playerId][piece.step];
-              if (!this.state.isCoordinateSafe(coord)) {
+              if (coord && !this.state.isCoordinateSafe(coord)) {
                 this.state.activePlayers.forEach(p => {
                   if (p.id === action.playerId) return;
                   p.pieces.forEach(opp => {
                     if (opp.step >= 0 && opp.step < 51) {
                       const oppCoord = PLAYER_PATHS[p.id][opp.step];
-                      if (oppCoord.r === coord.r && oppCoord.c === coord.c) {
+                      if (oppCoord && oppCoord.r === coord.r && oppCoord.c === coord.c) {
                         opp.reset(); Sound.playCapture();
                         const el = document.getElementById(`piece-${p.id}-${opp.pieceId}`);
                         if (el) el.classList.add('captured');
@@ -1560,7 +1581,7 @@ class GameController {
         if (legal.length === 0) {
           if (!this.skipInProgress) {
             this.skipInProgress = true;
-            this.writeLog('system', `No moves available for you (rolled ${this.state.diceValue}).`);
+            this.writeLog('system', `No moves available (rolled ${this.state.diceValue}).`);
             setTimeout(async () => {
               this.skipInProgress = false;
               this.state.switchTurn(false, false, false);
@@ -1597,7 +1618,7 @@ class GameController {
         userId: 'bot',
         isReady: true
       });
-      this.writeLog('system', `🤖 ${PLAYER_NAMES[idx]} was converted to CPU bot.`);
+      this.writeLog('system', `🤖 ${PLAYER_NAMES[idx]} converted to AI.`);
     } catch(e) {
       console.error(e);
     }
@@ -1660,9 +1681,30 @@ class GameController {
       this.state.diceValue = roll;
       this.writeLog(PLAYER_COLORS[this.myColorIdx], `${this.myPlayerName} rolled ${roll}`);
       
+      let nextRollAgainCount = this.state.rollAgainCount;
+      if (roll === 6) {
+        nextRollAgainCount++;
+      } else {
+        nextRollAgainCount = 0;
+      }
+
+      if (nextRollAgainCount >= 3) {
+        this.state.rollAgainCount = 0;
+        this.state.switchTurn(false, false, false);
+        this.writeLog('system', `🚫 Rolled three 6s! Turn forfeited.`);
+        await currentRoomRef.update({
+          "gameState/currentPlayerIdx": this.state.currentPlayerIdx,
+          "gameState/statePhase": "rolling",
+          "gameState/rollAgainCount": 0,
+          "lastAction": { type: 'skip', playerId: this.myColorIdx, val: roll, timestamp: Date.now() }
+        });
+        return;
+      }
+
       await currentRoomRef.update({
         "gameState/diceValue": roll,
         "gameState/statePhase": "moving",
+        "gameState/rollAgainCount": nextRollAgainCount,
         "lastAction": { type: 'roll', playerId: this.myColorIdx, val: roll, timestamp: Date.now() }
       });
     } else {
@@ -1680,23 +1722,32 @@ class GameController {
 
   processDiceValue(roll) {
     const current = this.state.currentPlayer;
+    
+    let nextRollAgainCount = this.state.rollAgainCount;
+    if (roll === 6) {
+      nextRollAgainCount++;
+    } else {
+      nextRollAgainCount = 0;
+    }
+
+    if (nextRollAgainCount >= 3) {
+      this.state.rollAgainCount = 0;
+      this.state.switchTurn(false, false, false);
+      this.writeLog('system', `🚫 ${current.name} rolled three 6s! Turn forfeited.`);
+      this.updateUI();
+      this.checkTurnState();
+      return;
+    }
+
+    this.state.rollAgainCount = nextRollAgainCount;
     const legalPieces = this.state.getValidPiecesToMove(current, roll);
 
     if (legalPieces.length === 0) {
-      this.writeLog('system', `No moves available for ${current.name} (rolled ${roll}).`);
+      this.writeLog('system', `No moves available (rolled ${roll}).`);
       setTimeout(async () => {
         this.state.switchTurn(false, false, false);
-        if (this.isMultiplayer) {
-          await currentRoomRef.update({
-            "gameState/currentPlayerIdx": this.state.currentPlayerIdx,
-            "gameState/statePhase": this.state.statePhase,
-            "gameState/rollAgainCount": this.state.rollAgainCount,
-            "lastAction": { type: 'skip', playerId: current.id, val: 0, timestamp: Date.now() }
-          });
-        } else {
-          this.updateUI();
-          this.checkTurnState();
-        }
+        this.updateUI();
+        this.checkTurnState();
       }, 1000);
       return;
     }
@@ -1705,11 +1756,7 @@ class GameController {
     this.updateUI();
 
     if (current.type === 'human') {
-      if (this.isMultiplayer) {
-        // Handled in Firebase listener sync
-      } else {
-        this.renderer.highlightMovablePieces(legalPieces, (piece) => this.movePieceExecute(piece));
-      }
+      this.renderer.highlightMovablePieces(legalPieces, (piece) => this.movePieceExecute(piece));
     } else {
       this.scheduleBotDecision();
     }
@@ -1737,18 +1784,18 @@ class GameController {
         this.renderer.renderPieces(this.state.players);
         await sleep(150);
       }
-      if (piece.step === 56) { reachedHome = true; Sound.playHome(); this.writeLog(current.color, `🎉 Piece reached home center for ${current.name}!`); }
+      if (piece.step === 56) { reachedHome = true; Sound.playHome(); this.writeLog(current.color, `🎉 Token arrived home for ${current.name}!`); }
     }
 
     if (piece.step >= 0 && piece.step < 51) {
       const coord = PLAYER_PATHS[current.id][piece.step];
-      if (!this.state.isCoordinateSafe(coord)) {
+      if (coord && !this.state.isCoordinateSafe(coord)) {
         this.state.activePlayers.forEach(p => {
           if (p.id === current.id) return;
           p.pieces.forEach(opp => {
             if (opp.step >= 0 && opp.step < 51) {
               const oppCoord = PLAYER_PATHS[p.id][opp.step];
-              if (oppCoord.r === coord.r && oppCoord.c === coord.c) {
+              if (oppCoord && oppCoord.r === coord.r && oppCoord.c === coord.c) {
                 capturedOpponent = true; opp.reset(); Sound.playCapture();
                 const el = document.getElementById(`piece-${p.id}-${opp.pieceId}`);
                 if (el) el.classList.add('captured');
@@ -1843,10 +1890,38 @@ class GameController {
         
         this.botRollInProgress = false;
         
+        let nextRollAgainCount = this.state.rollAgainCount;
+        if (roll === 6) {
+          nextRollAgainCount++;
+        } else {
+          nextRollAgainCount = 0;
+        }
+
+        if (nextRollAgainCount >= 3) {
+          this.state.rollAgainCount = 0;
+          this.state.switchTurn(false, false, false);
+          
+          if (this.isMultiplayer) {
+            await currentRoomRef.update({
+              "gameState/currentPlayerIdx": this.state.currentPlayerIdx,
+              "gameState/statePhase": "rolling",
+              "gameState/rollAgainCount": 0,
+              "lastAction": { type: 'skip', playerId: current.id, val: roll, timestamp: Date.now() }
+            });
+          } else {
+            this.updateUI();
+            this.checkTurnState();
+          }
+          return;
+        }
+
+        this.state.rollAgainCount = nextRollAgainCount;
+
         if (this.isMultiplayer) {
           await currentRoomRef.update({
             "gameState/diceValue": roll,
             "gameState/statePhase": "moving",
+            "gameState/rollAgainCount": nextRollAgainCount,
             "lastAction": { type: 'roll', playerId: current.id, val: roll, timestamp: Date.now() }
           });
         } else {
