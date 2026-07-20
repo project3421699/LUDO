@@ -952,6 +952,9 @@ class GameController {
   }
 
   parseUrlRoomId() {
+    const params = new URLSearchParams(window.location.search);
+    const queryRoom = params.get('room');
+    if (queryRoom) return queryRoom.toUpperCase();
     const path = window.location.pathname.replace(/\/$/, '');
     const match = path.match(/^\/(LUDO-[A-Za-z0-9\-]+)$/i);
     return match ? match[1].toUpperCase() : null;
@@ -1157,7 +1160,7 @@ class GameController {
     try {
       await firebaseDB.ref(`rooms/${roomId}`).set(defaultRoom);
       if (window.history.replaceState) {
-        window.history.replaceState({}, '', `/${roomId}`);
+        window.history.replaceState({}, '', this.buildRoomUrl(roomId));
       }
       this.connectToRoom(roomId);
     } catch (e) {
@@ -1717,7 +1720,7 @@ class GameController {
   copyRoomId() {
     const roomId = this.roomId;
     if (!roomId) return;
-    const inviteUrl = `${window.location.origin}/${roomId}`;
+    const inviteUrl = this.buildRoomUrl(roomId);
     const messages = [
       `🎲 Ready to get beat? Join my Ludo room!\n🏠 Room: ${roomId}\n🔗 ${inviteUrl}`,
       `🏆 Ludo showdown waiting for you!\nRoom: ${roomId}\n${inviteUrl}`,
@@ -1740,6 +1743,13 @@ class GameController {
     if (window.history.replaceState) {
       window.history.replaceState({}, '', '/');
     }
+  }
+
+  /* =====================================================================
+     URL HELPERS
+     ===================================================================== */
+  buildRoomUrl(roomId) {
+    return `${window.location.origin}/?room=${roomId}`;
   }
 
   /* =====================================================================
